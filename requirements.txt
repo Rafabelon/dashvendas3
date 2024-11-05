@@ -3,4 +3,3 @@ streamlit
 sqlalchemy
 psycopg2-binary
 plotly
-python-dotenv

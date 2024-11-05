@@ -6,12 +6,11 @@ from dotenv import load_dotenv
 import plotly.express as px
 import plotly.figure_factory as ff
 import plotly.colors
+import datetime
 
 # Configurações iniciais
 st.set_page_config(page_title='Dashboard de Vendas', layout='wide')
 
-# Carregar as variáveis de ambiente
-load_dotenv()
 
 # Obter as credenciais do banco de dados
 DB_USER = st.secrets["postgres"]["user"]
@@ -36,33 +35,61 @@ def load_data():
 
 df = load_data()
 
-# Converter colunas de data se necessário
-col_datas = ['DATA_DA_TRANSACAO', 'DATA_DO_REPASSE', 'DATA_DA_ANTECIPACAO']
-for col in col_datas:
-    df[col] = pd.to_datetime(df[col], errors='coerce')
-
 # Título do Dashboard
 st.title('Dashboard de Vendas de Cartão de Crédito')
 
 # Filtros
 st.sidebar.header('Filtros')
 
+# Converter colunas de data se necessário
+col_datas = ['DATA_DA_TRANSACAO', 'DATA_DO_REPASSE', 'DATA_DA_ANTECIPACAO']
+for col in col_datas:
+    df[col] = pd.to_datetime(df[col], errors='coerce')
+
 # Filtro de Data da Transação
-data_min = df['DATA_DA_TRANSACAO'].min()
-data_max = df['DATA_DA_TRANSACAO'].max()
-data_selecionada = st.sidebar.date_input('Data da Transação', [data_min, data_max])
+data_min = df['DATA_DA_TRANSACAO'].min().normalize()
+data_max = df['DATA_DA_TRANSACAO'].max().normalize()
+
+# Obter a data de hoje e normalizá-la
+data_hoje = pd.to_datetime('today').normalize()
+
+# Definir data_fim_padrao como a data mínima entre hoje e data_max
+data_fim_padrao = min(data_hoje, data_max)
+
+# Definir data_inicio_padrao como a data máxima entre data_fim_padrao - 6 dias e data_min
+data_inicio_padrao = max(data_fim_padrao - pd.Timedelta(days=6), data_min)
+
+# Data de 30 dias atrás
+data_30_dias_atras = data_hoje - pd.Timedelta(days=31)
+
+# Definir as datas padrão para os últimos 7 dias (ou o máximo disponível)
+data_selecionada = st.sidebar.date_input(
+    'Data da Transação',
+    [data_inicio_padrao.date(), data_fim_padrao.date()],
+    min_value=data_min.date(),
+    max_value=data_max.date()
+)
 
 # Se apenas uma data for selecionada, duplicamos ela
 if isinstance(data_selecionada, list) or isinstance(data_selecionada, tuple):
     if len(data_selecionada) == 1:
-        data_inicio = data_selecionada[0]
-        data_fim = data_selecionada[0]
+        data_inicio = pd.to_datetime(data_selecionada[0])
+        data_fim = pd.to_datetime(data_selecionada[0])
     else:
-        data_inicio = data_selecionada[0]
-        data_fim = data_selecionada[1]
+        data_inicio = pd.to_datetime(data_selecionada[0])
+        data_fim = pd.to_datetime(data_selecionada[1])
 else:
-    data_inicio = data_selecionada
-    data_fim = data_selecionada
+    data_inicio = pd.to_datetime(data_selecionada)
+    data_fim = pd.to_datetime(data_selecionada)
+
+# Aplicar os filtros no DataFrame
+df_filtrado = df[
+    (df['DATA_DA_TRANSACAO'] >= data_inicio) &
+    (df['DATA_DA_TRANSACAO'] <= data_fim)
+]
+
+#Aplicar filtro DataFrame 30 dias
+df_filtrado_30_dias = df[df['DATA_DA_TRANSACAO'] >= data_30_dias_atras]
 
 # Filtro de Cliente (Fantasia Subadquirido)
 clientes = df['FANTASIA_SUBADQUIRIDO'].unique()
@@ -73,9 +100,9 @@ cliente_selecionado = st.sidebar.multiselect('Selecione o Cliente', all_clientes
 # Filtrar o DataFrame com base no cliente selecionado
 if 'Todos' in cliente_selecionado:
     cliente_selecionado = list(clientes)
-    df_cliente = df.copy()
+    df_cliente = df_filtrado.copy()
 else:
-    df_cliente = df[df['FANTASIA_SUBADQUIRIDO'].isin(cliente_selecionado)]
+    df_cliente = df_filtrado[df_filtrado['FANTASIA_SUBADQUIRIDO'].isin(cliente_selecionado)]
 
 # Filtro de Projeto
 st.sidebar.write('Projeto')
@@ -89,31 +116,28 @@ if 'Todos' in projeto_selecionado:
 else:
     df_cliente = df_cliente[df_cliente['PROJETO_SUBADQUIRIDO'].isin(projeto_selecionado)]
 
-# Aplicar Filtros de Data
-df_filtrado = df_cliente[
-    (df_cliente['DATA_DA_TRANSACAO'] >= pd.to_datetime(data_inicio)) &
-    (df_cliente['DATA_DA_TRANSACAO'] <= pd.to_datetime(data_fim))
-]
 
 # Cálculo dos Totalizadores
-total_valor_bruto = df_filtrado['VALOR_BRUTO_TRANSACIONADO'].sum()
-total_valor_repassado = df_filtrado['VALOR_DE_REPASSE'].sum()
+total_valor_bruto_30_dias = df_filtrado_30_dias['VALOR_BRUTO_TRANSACIONADO'].sum()
+total_valor_bruto = df_cliente['VALOR_BRUTO_TRANSACIONADO'].sum()
+total_valor_repassado = df_cliente['VALOR_DE_REPASSE'].sum()
 
 # Exibir os Totalizadores no Dashboard
 st.markdown('## Resumo dos Valores')
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric(label="Total Valor Bruto Transacionado", value=f"R$ {total_valor_bruto:,.2f}")
+    st.metric(label="Total Valor Bruto Transacionado Periodo", value=f"R$ {total_valor_bruto:,.2f}")
 with col2:
     st.metric(label="Total Valor Repassado", value=f"R$ {total_valor_repassado:,.2f}")
+with col3:
+    st.metric(label="Total Valor Bruto Últimos 30 Dias", value=f"R$ {total_valor_bruto_30_dias:,.2f}")
 
 # Análises e Visualizações
-
-# 1. Total Bruto Transacionado por Fantasia Subadquirido
+# 1. Total Bruto Transacionado por Cliente
 st.header('Total Bruto Transacionado por Cliente')
-df_cliente_agg = df_filtrado.groupby('FANTASIA_SUBADQUIRIDO')['VALOR_BRUTO_TRANSACIONADO'].sum().reset_index()
+df_cliente_agg = df_cliente.groupby('FANTASIA_SUBADQUIRIDO')['VALOR_BRUTO_TRANSACIONADO'].sum().reset_index()
 fig1 = px.bar(df_cliente_agg, x='FANTASIA_SUBADQUIRIDO', y='VALOR_BRUTO_TRANSACIONADO', labels={
     'FANTASIA_SUBADQUIRIDO': 'Cliente',
     'VALOR_BRUTO_TRANSACIONADO': 'Valor Bruto Transacionado'
@@ -122,15 +146,15 @@ st.plotly_chart(fig1, use_container_width=True)
 
 # 2. Total Valor Bruto Transacionado por Bandeira
 st.header('Total Valor Bruto Transacionado por Bandeira')
-df_bandeira = df_filtrado.groupby('BANDEIRA')['VALOR_BRUTO_TRANSACIONADO'].sum().reset_index()
+df_bandeira = df_cliente.groupby('BANDEIRA')['VALOR_BRUTO_TRANSACIONADO'].sum().reset_index()
 fig2 = px.pie(df_bandeira, names='BANDEIRA', values='VALOR_BRUTO_TRANSACIONADO')
 st.plotly_chart(fig2, use_container_width=True)
 
-# 3. Gráfico do Valor Bruto Total por Dia vs Valor Líquido
+# 3. Valor Bruto e Líquido Transacionado por Dia
 st.header('Valor Bruto e Líquido Transacionado por Dia')
 
 # Agrupar os dados por data
-df_valores_dia = df_filtrado.groupby('DATA_DA_TRANSACAO').agg({
+df_valores_dia = df_cliente.groupby('DATA_DA_TRANSACAO').agg({
     'VALOR_BRUTO_TRANSACIONADO': 'sum',
     'VALOR_DE_REPASSE': 'sum'
 }).reset_index()
@@ -146,14 +170,14 @@ fig_valores = px.line(df_valores_dia, x='DATA_DA_TRANSACAO', y=['VALOR_BRUTO_TRA
 })
 st.plotly_chart(fig_valores, use_container_width=True)
 
-# 4. Gráfico do Valor Pago versus Valor a Pagar
+# 4. Valor Pago vs Valor a Pagar
 st.header('Valor Pago vs Valor a Pagar')
 
 # Criar uma nova coluna indicando se o valor foi pago ou está a pagar
-df_filtrado['STATUS_PAGAMENTO'] = df_filtrado['DINHEIRO_REPASSADO'].apply(lambda x: 'Pago' if x == 'PAGO' else 'A Pagar')
+df_cliente['STATUS_PAGAMENTO'] = df_cliente['DINHEIRO_REPASSADO'].apply(lambda x: 'Pago' if x == 'PAGO' else 'A Pagar')
 
 # Agrupar os dados por status de pagamento
-df_pagamento = df_filtrado.groupby('STATUS_PAGAMENTO')['VALOR_DE_REPASSE'].sum().reset_index()
+df_pagamento = df_cliente.groupby('STATUS_PAGAMENTO')['VALOR_DE_REPASSE'].sum().reset_index()
 
 # Criar o gráfico
 fig_pagamento = px.pie(df_pagamento, names='STATUS_PAGAMENTO', values='VALOR_DE_REPASSE', labels={
@@ -166,10 +190,7 @@ st.plotly_chart(fig_pagamento, use_container_width=True)
 st.header('Agenda Futura de Pagamento aos Clientes (Calendário)')
 
 # Filtrar transações abertas ou em processamento
-df_agenda = df_filtrado[df_filtrado['DINHEIRO_REPASSADO'].isin(['ABERTO', 'PROCESSANDO_REPASSE'])]
-
-# Verificar valores únicos de 'DINHEIRO_REPASSADO'
-# st.write('Valores únicos de DINHEIRO_REPASSADO:', df_filtrado['DINHEIRO_REPASSADO'].unique())
+df_agenda = df_cliente[df_cliente['DINHEIRO_REPASSADO'].isin(['ABERTO', 'PROCESSANDO_REPASSE'])]
 
 # Preparar os dados para o gráfico de Gantt
 df_agenda_gantt = df_agenda[['FANTASIA_SUBADQUIRIDO', 'DATA_DA_TRANSACAO', 'DATA_DO_REPASSE', 'VALOR_DE_REPASSE']].copy()
@@ -213,8 +234,7 @@ else:
         )
         st.plotly_chart(fig_gantt, use_container_width=True)
 
-
-# 6. Relatório Analítico ao Clicar em um Cliente Específico
+# 6. Relatório Analítico por Cliente
 st.header('Relatório Analítico por Cliente')
 cliente_detalhe = st.selectbox('Selecione um Cliente para Detalhes', sorted(df['FANTASIA_SUBADQUIRIDO'].unique()))
 df_cliente_detalhe = df[df['FANTASIA_SUBADQUIRIDO'] == cliente_detalhe]
