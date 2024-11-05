@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine
-from dotenv import load_dotenv
 import plotly.express as px
 import plotly.figure_factory as ff
 import plotly.colors
