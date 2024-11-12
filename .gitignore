@@ -6,4 +6,6 @@ data/
 database/
 venv/
 import_data.py
+cred.py
+theme.css
 __pycache__/
